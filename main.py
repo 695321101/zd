@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # 名称: MinimalLightBrowser
-# 说明: 一个极简、无黑色元素、带运行日志终端的轻量浏览器（悬浮输入条版本 + 历史消息）
+# 说明: 一个极简、无黑色元素、带运行日志终端的轻量浏览器（悬浮输入条版本 + 历史消息 + 终端集成）
 # 依赖: pip install PyQt5 PyQtWebEngine
 
 import sys
@@ -271,20 +271,116 @@ class HistoryPanel(QWidget):
         if target_height > 0:
             QTimer.singleShot(50, self.scroll_to_bottom)
 
+class TerminalPanel(QWidget):
+    """终端面板（集成到悬浮窗口）"""
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setFixedHeight(0)  # 初始隐藏
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # 标题栏
+        header = QWidget()
+        header.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #F8F8F8, stop:1 #F0F0F0);
+                border-bottom: 1px solid #D0D0D0;
+            }
+        """)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 8, 16, 8)
+        
+        title = QLabel("📊 运行日志")
+        title.setFont(QFont("Microsoft YaHei", 11, QFont.Bold))
+        title.setStyleSheet("color: #1D1D1F; background: transparent; border: none;")
+        
+        self.clear_btn = QPushButton("清空")
+        self.clear_btn.setFixedSize(50, 26)
+        self.clear_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #007AFF;
+                border: 1px solid #007AFF;
+                border-radius: 13px;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background: rgba(0, 122, 255, 0.1);
+            }
+            QPushButton:pressed {
+                background: rgba(0, 122, 255, 0.2);
+            }
+        """)
+        self.clear_btn.clicked.connect(self.clear_terminal)
+        
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        header_layout.addWidget(self.clear_btn)
+        
+        # 终端内容
+        self.terminal = QTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setStyleSheet("""
+            QTextEdit {
+                background-color: #FAFAFA;
+                color: #333;
+                border: none;
+                padding: 8px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+            }
+        """)
+        
+        main_layout.addWidget(header)
+        main_layout.addWidget(self.terminal)
+        
+        self.setStyleSheet("""
+            QWidget {
+                background: #FFFFFF;
+                border-radius: 12px;
+            }
+        """)
+    
+    def log(self, message):
+        """添加日志"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.terminal.append(f"[{timestamp}] {message}")
+    
+    def clear_terminal(self):
+        """清空终端"""
+        self.terminal.clear()
+    
+    def toggle_visibility(self):
+        """切换显示/隐藏"""
+        target_height = 200 if self.height() == 0 else 0
+        
+        self.animation = QPropertyAnimation(self, b"maximumHeight")
+        self.animation.setDuration(300)
+        self.animation.setStartValue(self.height())
+        self.animation.setEndValue(target_height)
+        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
+        self.animation.start()
+
 class BrowserView:
     """浏览器视图模块 - 封装浏览器视图和相关操作"""
-    def __init__(self, profile, terminal):
-        self.terminal = terminal
+    def __init__(self, profile, terminal_panel):
+        self.terminal_panel = terminal_panel
         self.web_view = QWebEngineView()
         self.web_view.setPage(QWebEnginePage(profile, self.web_view))
         self.web_view.loadFinished.connect(self.on_load_finished)
 
     def on_load_finished(self, ok):
         if ok:
-            self.terminal.log("✅ 加载完成")
+            self.terminal_panel.log("✅ 加载完成")
             QTimer.singleShot(1000, self.check_page_stability)
         else:
-            self.terminal.log("❌ 加载失败")
+            self.terminal_panel.log("❌ 加载失败")
 
     def check_page_stability(self):
         js_check = """
@@ -299,9 +395,9 @@ class BrowserView:
         """
         def handle_stability(result):
             if result:
-                self.terminal.log("✅ 页面已稳定")
+                self.terminal_panel.log("✅ 页面已稳定")
             else:
-                self.terminal.log("⏳ 页面仍在加载中...")
+                self.terminal_panel.log("⏳ 页面仍在加载中...")
                 QTimer.singleShot(2000, self.check_page_stability)
         self.web_view.page().runJavaScript(js_check, handle_stability)
 
@@ -314,35 +410,14 @@ class BrowserView:
         else:
             self.web_view.page().runJavaScript(js_code)
 
-class Terminal:
-    """终端日志模块 - 负责日志显示"""
-    def __init__(self):
-        self.terminal = QTextEdit()
-        self.terminal.setReadOnly(True)
-        self.terminal.setMinimumHeight(160)
-        self.terminal.setStyleSheet("""
-            QTextEdit {
-                background-color: #f8f8f8;
-                color: #333;
-                border-top: 1px solid #ccc;
-                padding: 6px;
-            }
-        """)
-
-    def log(self, message):
-        self.terminal.append(message)
-
-    def widget(self):
-        return self.terminal
-
 class FloatingChatWindow(QWidget):
-    """悬浮聊天窗口 - 独立的悬浮输入条"""
-    def __init__(self, on_send_callback, on_toggle_main, on_toggle_terminal, history_panel):
+    """悬浮聊天窗口 - 独立的悬浮输入条（集成终端）"""
+    def __init__(self, on_send_callback, on_toggle_main, history_panel, terminal_panel):
         super().__init__()
         self.on_send_callback = on_send_callback
         self.on_toggle_main = on_toggle_main
-        self.on_toggle_terminal = on_toggle_terminal
         self.history_panel = history_panel
+        self.terminal_panel = terminal_panel
         self.is_always_on_top = False
         self.drag_position = None
         self.init_ui()
@@ -359,6 +434,9 @@ class FloatingChatWindow(QWidget):
         
         # 添加历史消息面板
         main_layout.addWidget(self.history_panel)
+        
+        # 添加终端面板
+        main_layout.addWidget(self.terminal_panel)
         
         # 控制按钮容器
         control_container = QWidget()
@@ -470,7 +548,7 @@ class FloatingChatWindow(QWidget):
         self.send_button.clicked.connect(self.send_message)
         self.hide_main_btn.clicked.connect(self.toggle_main_window)
         self.history_btn.clicked.connect(self.toggle_history)
-        self.terminal_btn.clicked.connect(self.on_toggle_terminal)
+        self.terminal_btn.clicked.connect(self.toggle_terminal)
         self.settings_btn.clicked.connect(self.show_settings)
         self.pin_btn.clicked.connect(self.toggle_pin)
         
@@ -527,6 +605,14 @@ class FloatingChatWindow(QWidget):
             self.history_btn.setText("📜 收起")
         else:
             self.history_btn.setText("📜 历史")
+
+    def toggle_terminal(self):
+        """切换终端面板"""
+        self.terminal_panel.toggle_visibility()
+        if self.terminal_btn.text() == "📊 终端":
+            self.terminal_btn.setText("📊 收起")
+        else:
+            self.terminal_btn.setText("📊 终端")
 
     def show_settings(self):
         """显示设置（占位）"""
@@ -589,34 +675,14 @@ class FloatingChatWindow(QWidget):
             self.move(event.globalPos() - self.drag_position)
             event.accept()
 
-class ChatInput:
-    """聊天输入模块 - 负责聊天输入和发送（保持兼容性）"""
-    def __init__(self, on_send_callback):
-        self.on_send_callback = on_send_callback
-        self.floating_window = None
-
-    def set_floating_window(self, floating_window):
-        """设置悬浮窗口引用"""
-        self.floating_window = floating_window
-
-    def set_enabled(self, enabled):
-        if self.floating_window:
-            self.floating_window.set_enabled(enabled)
-
-    def focus(self):
-        if self.floating_window:
-            self.floating_window.focus_input()
-
-    def widget(self):
-        return QWidget()
-
 class ScreenshotHandler:
-    """截图和上传模块 - 负责截图和上传"""
-    def __init__(self, browser_view, terminal):
+    """截图和上传模块 - 优化版"""
+    def __init__(self, browser_view, terminal_panel):
         self.browser_view = browser_view
-        self.terminal = terminal
+        self.terminal_panel = terminal_panel
 
     def upload_screenshot(self, text, after_upload_callback):
+        """上传截图，不跳过截图步骤"""
         screen = QApplication.primaryScreen()
         pixmap = screen.grabWindow(0)
 
@@ -626,67 +692,90 @@ class ScreenshotHandler:
         pixmap.save(buffer, "PNG")
         base64_image = byte_array.toBase64().data().decode()
 
+        # 优化后的文件上传脚本
         js_image = f"""
         (function() {{
-            const base64 = '{base64_image}';
-            const byteString = atob(base64);
-            const ab = new ArrayBuffer(byteString.length);
-            const ia = new Uint8Array(ab);
-            for (let i = 0; i < byteString.length; i++){{
-                ia[i] = byteString.charCodeAt(i);
-            }}
-
-            const blob = new Blob([ab], {{type: 'image/png'}});
-            const file = new File([blob], 'screenshot.png', {{type: 'image/png'}});
-
-            const fileSelectors = [
-                'input[type="file"][accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain"]',
-                'input[type="file"][accept*="image"]',
-                'input[data-testid*="upload"]',
-                'input.semi-upload-input',
-                'input[class*="upload"]',
-                '.upload-button input',
-                'input[type="file"]'
-            ];
-
-            let fileInput = null;
-            for (let selector of fileSelectors){{
-                const el = document.querySelector(selector);
-                if (el){{
-                    fileInput = el;
-                    console.log('✅ 找到文件输入:', selector);
-                    break;
+            try {{
+                const base64 = '{base64_image}';
+                const byteString = atob(base64);
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let i = 0; i < byteString.length; i++){{
+                    ia[i] = byteString.charCodeAt(i);
                 }}
-            }}
-            if (!fileInput){{
-                console.log('❌ 未找到文件输入');
+
+                const blob = new Blob([ab], {{type: 'image/png'}});
+                const file = new File([blob], 'screenshot.png', {{type: 'image/png'}});
+
+                // 扩展文件输入选择器列表
+                const fileSelectors = [
+                    'input[type="file"]',
+                    'input[accept*="image"]',
+                    'input[data-testid*="upload"]',
+                    'input[data-testid*="file"]',
+                    'input.semi-upload-input',
+                    'input[class*="upload"]',
+                    'input[class*="file"]',
+                    '.upload-button input',
+                    '[class*="attachment"] input',
+                    '[class*="file-input"]'
+                ];
+
+                let fileInput = null;
+                for (let selector of fileSelectors){{
+                    const elements = document.querySelectorAll(selector);
+                    if (elements.length > 0) {{
+                        // 找到第一个可见或存在的文件输入
+                        for (let el of elements) {{
+                            if (!el.disabled) {{
+                                fileInput = el;
+                                console.log('✅ 找到文件输入:', selector);
+                                break;
+                            }}
+                        }}
+                        if (fileInput) break;
+                    }}
+                }}
+                
+                if (!fileInput){{
+                    console.log('⚠️ 未找到文件输入，继续执行但不影响文字发送');
+                    // 不返回false，继续执行以确保文字发送
+                }}
+                
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                fileInput.files = dt.files;
+                
+                // 触发多种事件确保上传生效
+                ['change', 'input'].forEach(eventType => {{
+                    fileInput.dispatchEvent(new Event(eventType, {{ bubbles: true, cancelable: true }}));
+                }});
+                
+                console.log('✅ 截图上传成功');
+                return true;
+            }} catch (error) {{
+                console.error('❌ 截图上传异常:', error);
                 return false;
             }}
-            const dt = new DataTransfer();
-            dt.items.add(file);
-            fileInput.files = dt.files;
-            fileInput.dispatchEvent(new Event('change',{{ bubbles: true }}));
-            console.log('✅ 截图上传成功');
-            return true;
         }})();
         """
 
         def handle_result(result):
             if result:
-                self.terminal.log("✅ 截图上传成功")
-                QTimer.singleShot(1000, lambda: after_upload_callback(text))
+                self.terminal_panel.log("✅ 截图上传成功")
             else:
-                self.terminal.log("❌ 截图上传失败，直接发送文字")
-                QTimer.singleShot(500, lambda: after_upload_callback(text))
+                self.terminal_panel.log("⚠️ 截图上传过程已执行（可能未找到上传位置）")
+            # 无论截图是否成功，都执行文字发送
+            QTimer.singleShot(1500, lambda: after_upload_callback(text))
 
         self.browser_view.run_javascript(js_image, handle_result)
 
 class ResponseMonitor:
-    """回复监控模块 - 负责监控豆包回复状态"""
-    def __init__(self, browser_view, terminal, chat_input, history_panel):
+    """回复监控模块 - 优化版"""
+    def __init__(self, browser_view, terminal_panel, floating_chat, history_panel):
         self.browser_view = browser_view
-        self.terminal = terminal
-        self.chat_input = chat_input
+        self.terminal_panel = terminal_panel
+        self.floating_chat = floating_chat
         self.history_panel = history_panel
         self.timer = None
         self.waiting_logged = False
@@ -695,58 +784,168 @@ class ResponseMonitor:
         self.stable_count = 0
         self.current_user_message = None
 
+    def check_user_message_appeared(self, text):
+        """优化的用户消息检测"""
+        self.current_user_message = text
+        
+        # 更安全的文本转义
+        safe_text = (text.replace("\\", "\\\\")
+                         .replace("'", "\\'")
+                         .replace('"', '\\"')
+                         .replace("\n", "\\n"))
+
+        # 优化后的检测脚本
+        js = """
+        (function() {{
+            try {{
+                const searchText = '{text}';
+                
+                // 扩展选择器列表
+                const possibleSelectors = [
+                    '[data-role="user-message"]',
+                    '[class*="user"]',
+                    '[class*="role-user"]',
+                    '[class*="msg-bubble"]',
+                    '[class*="message"]',
+                    '[data-testid*="message"]',
+                    'div[class*="chat"] > div',
+                    '.markdown-body',
+                    'p', 'span', 'div'
+                ];
+
+                let found = false;
+                
+                // 方法1: 通过选择器查找
+                for (let sel of possibleSelectors) {{
+                    const els = document.querySelectorAll(sel);
+                    for (let el of els) {{
+                        const txt = el.textContent.trim();
+                        if (txt && txt.includes(searchText.substring(0, 50))) {{
+                            console.log('✅ 找到用户消息(选择器):', sel);
+                            found = true;
+                            break;
+                        }}
+                    }}
+                    if (found) break;
+                }}
+                
+                // 方法2: 如果方法1失败，使用全局搜索
+                if (!found) {{
+                    const bodyText = document.body.textContent;
+                    if (bodyText.includes(searchText.substring(0, 50))) {{
+                        console.log('✅ 找到用户消息(全局搜索)');
+                        found = true;
+                    }}
+                }}
+                
+                return found;
+            }} catch (error) {{
+                console.error('❌ 检测用户消息异常:', error);
+                return false;
+            }}
+        }})();
+        """.format(text=safe_text[:100])  # 只取前100个字符进行匹配
+
+        def handle(result):
+            if result:
+                self.terminal_panel.log("✅ 用户消息已出现在页面上")
+                if self.current_user_message:
+                    self.history_panel.add_message(self.current_user_message, is_user=True)
+                self.terminal_panel.log("🔍 开始监测豆包回复状态…")
+                self.start_monitoring()
+            else:
+                self.user_check_count += 1
+                if self.user_check_count < 15:  # 增加重试次数到15次
+                    self.terminal_panel.log(f"⏳ 等待用户消息出现... ({self.user_check_count}/15)")
+                    QTimer.singleShot(800, lambda: self.check_user_message_appeared(text))
+                else:
+                    self.terminal_panel.log("⚠️ 消息可能已发送，但未在页面检测到（开始监测回复）")
+                    # 即使没检测到用户消息，也添加到历史并开始监测回复
+                    if self.current_user_message:
+                        self.history_panel.add_message(self.current_user_message, is_user=True)
+                    self.start_monitoring()
+
+        self.browser_view.run_javascript(js, handle)
+
     def check_response_complete(self):
+        """检查回复是否完成"""
         js = """
         (function() {
-            const stopBtn = document.querySelector('button[data-testid*="stop"], button[aria-label*="停止"], button[class*="stop"]');
-            if (stopBtn) {
-                console.log('⏹️ 检测到停止按钮 — 正在回复中');
-                return { complete: false, reason: 'has_stop_button', replyLength: 0 };
-            }
-
-            const msgSelectors = [
-                'div[data-testid="message_text_content"]',
-                'div.msg-bubble',
-                'div[class*="message-content"]',
-                'div[class*="markdown-body"]',
-                'div[class*="chat-message"]'
-            ];
-            let msgs = [];
-            for (let sel of msgSelectors) {
-                const found = document.querySelectorAll(sel);
-                if (found && found.length > 0) {
-                    msgs = found;
-                    break;
+            try {
+                // 检查是否有停止按钮
+                const stopBtn = document.querySelector(
+                    'button[data-testid*="stop"], ' +
+                    'button[aria-label*="停止"], ' +
+                    'button[class*="stop"], ' +
+                    'button[class*="abort"]'
+                );
+                if (stopBtn && stopBtn.offsetParent !== null) {
+                    return { complete: false, reason: 'has_stop_button', replyLength: 0 };
                 }
-            }
-            if (msgs.length === 0) {
-                console.log('❌ 未找到任何消息');
-                return { complete: false, reason: 'no_messages', replyLength: 0 };
-            }
 
-            const lastMsg = msgs[msgs.length - 1];
-            const text = lastMsg.textContent.trim();
-            const len = text.length;
-            const cls = lastMsg.className || '';
-            const isBot = cls.includes('assistant') || cls.includes('bot') || cls.includes('markdown-body');
+                // 查找消息列表
+                const msgSelectors = [
+                    'div[data-testid="message_text_content"]',
+                    'div.msg-bubble',
+                    'div[class*="message-content"]',
+                    'div[class*="markdown-body"]',
+                    'div[class*="chat-message"]',
+                    '.markdown-body',
+                    '[class*="assistant"] > div',
+                    '[data-role*="assistant"]'
+                ];
+                
+                let msgs = [];
+                for (let sel of msgSelectors) {
+                    const found = document.querySelectorAll(sel);
+                    if (found && found.length > 0) {
+                        msgs = Array.from(found);
+                        break;
+                    }
+                }
+                
+                if (msgs.length === 0) {
+                    return { complete: false, reason: 'no_messages', replyLength: 0 };
+                }
 
-            if (!isBot) {
-                console.log('📩 最后消息是用户消息，还没有机器人回复');
-                return { complete: false, reason: 'no_bot_reply', replyLength:0 };
+                // 获取最后一条消息
+                const lastMsg = msgs[msgs.length - 1];
+                const text = lastMsg.textContent.trim();
+                const len = text.length;
+                
+                // 判断是否是机器人消息
+                const cls = lastMsg.className || '';
+                const role = lastMsg.getAttribute('data-role') || '';
+                const isBot = cls.includes('assistant') || 
+                             cls.includes('bot') || 
+                             cls.includes('markdown-body') ||
+                             role.includes('assistant');
+
+                if (!isBot) {
+                    return { complete: false, reason: 'no_bot_reply', replyLength: 0 };
+                }
+
+                return { complete: true, reason: 'ok', replyLength: len, replyText: text };
+            } catch (error) {
+                console.error('❌ 检查回复异常:', error);
+                return { complete: false, reason: 'error', replyLength: 0 };
             }
-
-            console.log('📄 机器人回复长度:', len);
-            return { complete: true, reason: 'ok', replyLength: len, replyText: text };
         })();
         """
+        
         def handle(result):
             if not result:
                 return
+                
             if not result.get('complete', False):
-                const_reason = result.get('reason', 'unknown')
-                if const_reason == 'has_stop_button':
+                reason = result.get('reason', 'unknown')
+                if reason == 'has_stop_button':
                     if not self.waiting_logged:
-                        self.terminal.log("💬 正在回复中…")
+                        self.terminal_panel.log("💬 正在回复中…")
+                        self.waiting_logged = True
+                elif reason == 'no_bot_reply':
+                    if not self.waiting_logged:
+                        self.terminal_panel.log("⏳ 等待机器人回复...")
                         self.waiting_logged = True
                 return
 
@@ -756,29 +955,25 @@ class ResponseMonitor:
             if current_len > 0:
                 if current_len == self.last_reply_length:
                     self.stable_count += 1
-                    self.terminal.log(f"⏳ 回复长度稳定: {current_len} 字符 (稳定次数: {self.stable_count}/3)")
+                    self.terminal_panel.log(f"⏳ 回复稳定检测: {current_len} 字符 ({self.stable_count}/3)")
+                    
                     if self.stable_count >= 3:
                         if self.timer:
                             self.timer.stop()
-                        self.terminal.log("🤖 豆包回复:")
-                        self.terminal.log("---")
-                        self.terminal.log(reply_text)
-                        self.terminal.log("---")
-                        self.terminal.log("✅ 回复完成，输入框已启用")
+                        
+                        self.terminal_panel.log("=" * 50)
+                        self.terminal_panel.log("🤖 豆包回复完成:")
+                        self.terminal_panel.log(f"字数: {current_len}")
+                        self.terminal_panel.log("-" * 50)
+                        self.terminal_panel.log(reply_text[:200] + "..." if len(reply_text) > 200 else reply_text)
+                        self.terminal_panel.log("=" * 50)
                         
                         # 添加到历史记录
                         self.history_panel.add_message(reply_text, is_user=False)
                         
-                        # 将回复保存到文件，供其他软件读取
-                        try:
-                            with open("latest_reply.txt", "w", encoding="utf-8") as f:
-                                f.write(reply_text)
-                            self.terminal.log("💾 回复已保存到 latest_reply.txt 文件")
-                        except Exception as e:
-                            self.terminal.log(f"❌ 保存回复到文件时出错: {str(e)}")
-                        
-                        self.chat_input.set_enabled(True)
-                        self.chat_input.focus()
+                        # 重置状态并启用输入
+                        self.floating_chat.set_enabled(True)
+                        self.floating_chat.focus_input()
                         self.waiting_logged = False
                         self.user_check_count = 0
                         self.last_reply_length = 0
@@ -787,250 +982,190 @@ class ResponseMonitor:
                 else:
                     self.stable_count = 0
                     self.last_reply_length = current_len
-                    self.terminal.log(f"📝 回复更新: {current_len} 字符")
-        self.browser_view.run_javascript(js, handle)
-
-    def check_user_message_appeared(self, text):
-        self.current_user_message = text
-        safe_text = text.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
-
-        js = """
-        (function() {{
-            const possibleSelectors = [
-                '[data-role="user-message"]',
-                '[class*="role-user"]',
-                '[class*="msg-bubble"]',
-                '[class*="message"]',
-                '[data-testid*="message"]',
-                'div[class*="chat"] div',
-                'p',
-                'span'
-            ];
-
-            let found = false;
-            for (let sel of possibleSelectors) {{
-                const els = document.querySelectorAll(sel);
-                for (let el of els) {{
-                    const txt = el.textContent.trim();
-                    if (txt && txt.includes('{text}')) {{
-                        console.log('✅ 找到用户消息:', txt);
-                        found = true;
-                        break;
-                    }}
-                }}
-                if (found) break;
-            }}
-            return found;
-        }})();
-        """.replace("{", "{{").replace("}", "}}").replace("{{text}}", "{text}").format(text=safe_text)
-
-        def handle(result):
-            if result:
-                self.terminal.log("✅ 用户消息已出现在页面上")
-                # 添加到历史记录
-                if self.current_user_message:
-                    self.history_panel.add_message(self.current_user_message, is_user=True)
-                self.terminal.log("🔍 开始监测豆包回复状态…")
-                self.start_monitoring()
-            else:
-                self.user_check_count += 1
-                if self.user_check_count < 10:
-                    QTimer.singleShot(1000, lambda: self.check_user_message_appeared(text))
-                else:
-                    self.terminal.log("❌ 未检测到用户消息，但可能已成功发送（请检查界面）")
-                    self.chat_input.set_enabled(True)
-
+                    self.terminal_panel.log(f"📝 回复更新: {current_len} 字符")
+                    
         self.browser_view.run_javascript(js, handle)
 
     def start_monitoring(self):
+        """开始监控回复"""
         if self.timer and self.timer.isActive():
             self.timer.stop()
+        
         self.timer = QTimer()
         self.timer.timeout.connect(self.check_response_complete)
-        self.timer.start(2000)
-        self.terminal.log("⌛ 等待回复中…")
-
+        self.timer.start(1500)  # 缩短检测间隔到1.5秒
+        
+        self.terminal_panel.log("⌛ 等待回复中…")
+        self.waiting_logged = False
 class MinimalLightBrowser(QMainWindow):
-   """主窗口类 - 负责整体窗口布局和协调各个模块"""
-   def __init__(self):
-       super().__init__()
-       self.setup_storage()
-       self.terminal = Terminal()
-       self.browser_view = BrowserView(self.profile, self.terminal)
-       self.chat_input = ChatInput(self.on_send_message)
-       self.screenshot_handler = ScreenshotHandler(self.browser_view, self.terminal)
-       
-       # 创建历史面板
-       self.history_panel = HistoryPanel()
-       
-       # 创建回复监控器（传入历史面板）
-       self.response_monitor = ResponseMonitor(
-           self.browser_view, 
-           self.terminal, 
-           self.chat_input,
-           self.history_panel
-       )
-       
-       # 创建悬浮窗口
-       self.floating_chat = FloatingChatWindow(
-           self.on_send_message,
-           self.toggle_main_window,
-           self.toggle_terminal,
-           self.history_panel
-       )
-       self.chat_input.set_floating_window(self.floating_chat)
-       
-       self.init_ui()
-       self.load_homepage()
-       
-       # 显示悬浮窗口
-       self.floating_chat.show()
+    """主窗口类 - 负责整体窗口布局和协调各个模块"""
+    def __init__(self):
+        super().__init__()
+        self.setup_storage()
+        
+        # 创建组件
+        self.history_panel = HistoryPanel()
+        self.terminal_panel = TerminalPanel()
+        self.browser_view = BrowserView(self.profile, self.terminal_panel)
+        self.screenshot_handler = ScreenshotHandler(self.browser_view, self.terminal_panel)
+        
+        # 创建悬浮窗口
+        self.floating_chat = FloatingChatWindow(
+            self.on_send_message,
+            self.toggle_main_window,
+            self.history_panel,
+            self.terminal_panel
+        )
+        
+        # 创建回复监控器
+        self.response_monitor = ResponseMonitor(
+            self.browser_view, 
+            self.terminal_panel, 
+            self.floating_chat,
+            self.history_panel
+        )
+        
+        self.init_ui()
+        self.load_homepage()
+        
+        # 显示悬浮窗口
+        self.floating_chat.show()
+        
+        # 默认缩小主窗口到最小尺寸
+        QTimer.singleShot(100, lambda: self.resize(0, 0))
 
-   def setup_storage(self):
-       self.storage_path = os.path.join(os.getcwd(), "browser_data")
-       os.makedirs(self.storage_path, exist_ok=True)
-       self.profile = QWebEngineProfile("MinimalLightBrowser", self)
-       self.profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
-       self.profile.setPersistentStoragePath(self.storage_path)
-       self.profile.setHttpCacheType(QWebEngineProfile.DiskHttpCache)
-       self.profile.setHttpCacheMaximumSize(200 * 1024 * 1024)
+    def setup_storage(self):
+        self.storage_path = os.path.join(os.getcwd(), "browser_data")
+        os.makedirs(self.storage_path, exist_ok=True)
+        self.profile = QWebEngineProfile("MinimalLightBrowser", self)
+        self.profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
+        self.profile.setPersistentStoragePath(self.storage_path)
+        self.profile.setHttpCacheType(QWebEngineProfile.DiskHttpCache)
+        self.profile.setHttpCacheMaximumSize(200 * 1024 * 1024)
 
-   def init_ui(self):
-       self.setWindowTitle("Minimal Light Browser")
-       self.setGeometry(100, 80, 1200, 800)
+    def init_ui(self):
+        self.setWindowTitle("Minimal Light Browser")
+        self.setGeometry(100, 80, 1200, 800)
 
-       app.setStyle(QStyleFactory.create("Fusion"))
-       palette = QPalette()
-       palette.setColor(QPalette.Window, QColor(245, 245, 245))
-       palette.setColor(QPalette.Base, QColor(255, 255, 255))
-       palette.setColor(QPalette.Text, QColor(50, 50, 50))
-       palette.setColor(QPalette.Button, QColor(240, 240, 240))
-       palette.setColor(QPalette.ButtonText, QColor(30, 30, 30))
-       palette.setColor(QPalette.Highlight, QColor(173, 216, 230))
-       app.setPalette(palette)
+        app.setStyle(QStyleFactory.create("Fusion"))
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(245, 245, 245))
+        palette.setColor(QPalette.Base, QColor(255, 255, 255))
+        palette.setColor(QPalette.Text, QColor(50, 50, 50))
+        palette.setColor(QPalette.Button, QColor(240, 240, 240))
+        palette.setColor(QPalette.ButtonText, QColor(30, 30, 30))
+        palette.setColor(QPalette.Highlight, QColor(173, 216, 230))
+        app.setPalette(palette)
 
-       font = QFont("Microsoft YaHei", 10)
-       app.setFont(font)
+        font = QFont("Microsoft YaHei", 10)
+        app.setFont(font)
 
-       splitter = QSplitter(Qt.Vertical)
-       
-       # 浏览器容器
-       browser_container = QWidget()
-       layout = QVBoxLayout(browser_container)
-       layout.addWidget(self.browser_view.web_view)
-       layout.setContentsMargins(0, 0, 0, 0)
-       
-       splitter.addWidget(browser_container)
-       splitter.addWidget(self.terminal.widget())
-       splitter.setSizes([700, 100])
+        # 只显示浏览器视图
+        central_widget = QWidget()
+        layout = QVBoxLayout(central_widget)
+        layout.addWidget(self.browser_view.web_view)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.setCentralWidget(central_widget)
 
-       self.setCentralWidget(splitter)
+    def load_homepage(self):
+        home_url = "https://www.doubao.com/chat/25474120854203650"
+        self.browser_view.load_url(home_url)
+        self.terminal_panel.log("🌐 已加载首页：" + home_url)
 
-   def load_homepage(self):
-       home_url = "https://www.doubao.com/chat/25474120854203650"
-       self.browser_view.load_url(home_url)
-       self.terminal.log("🌐 已加载首页：" + home_url)
+    def toggle_main_window(self):
+        """切换主窗口的大小（最小/正常）"""
+        if self.size().width() > 10 and self.size().height() > 10:
+            # 如果窗口较大，则缩小到最小
+            self.resize(0, 0)
+        else:
+            # 如果窗口很小，则恢复正常大小并确保可见
+            self.show()  # 确保窗口可见
+            self.resize(1200, 800)
+            self.activateWindow()
 
-   def toggle_main_window(self):
-       """切换主窗口的显示/隐藏"""
-       if self.isVisible():
-           self.hide()
-       else:
-           self.show()
-           self.activateWindow()
+    def on_send_message(self, text):
+        self.terminal_panel.log(f"📤 发送消息：{text}")
+        self.floating_chat.set_enabled(False)
+        self.screenshot_handler.upload_screenshot(text, self.send_text)
 
-   def toggle_terminal(self):
-       """切换终端的显示/隐藏"""
-       terminal_widget = self.terminal.widget()
-       if terminal_widget.isVisible():
-           terminal_widget.hide()
-       else:
-           terminal_widget.show()
-
-   def on_send_message(self, text):
-       self.terminal.log(f"📤 发送消息：{text}")
-       self.chat_input.set_enabled(False)
-       self.screenshot_handler.upload_screenshot(text, self.send_text)
-
-   def send_text(self, text):
-       escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-       js_text = f"""
-       (function() {{
-           const selectors = [
-               'textarea[data-testid="chat_input_input"]',
-               'textarea.semi-input-textarea',
-               'textarea[placeholder*="发消息"]',
-               'textarea',
-               '[contenteditable="true"]',
-               '.chat-input',
-               '[class*="input"] textarea'
-           ];
-           let ta = null;
-           for (let sel of selectors) {{
-               const el = document.querySelector(sel);
-               if (el) {{
-                   ta = el;
-                   console.log('✅ 找到输入框:', sel);
-                   break;
-               }}
-           }}
-           if (!ta) {{
-               console.log('❌ 未找到输入框');
-               return false;
-           }}
-           ta.focus();
-           const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-           const inputEvt = new Event('input', {{ bubbles: true, composed: true }});
-           const setValue = value => {{
-               nativeSetter.call(ta, value);
-               ta.dispatchEvent(inputEvt);
-           }};
-           setValue('{escaped}');
-           ['input','change','keyup','keydown'].forEach(evt => {{
-               ta.dispatchEvent(new Event(evt, {{ bubbles: true, composed: true }}));
-           }});
-           setTimeout(() => {{
-               const sendSelectors = [
-                   'button[type="submit"]',
-                   'button[class*="send"]',
-                   '.send-button',
-                   'button[aria-label*="发送"]',
-                   'button[data-testid*="send"]',
-                   'button.semi-button'
-               ];
-               let btn = null;
-               for (let sel of sendSelectors) {{
-                   const el = document.querySelector(sel);
-                   if (el) {{
-                       btn = el;
-                       console.log('✅ 找到发送按钮:', sel);
-                       break;
-                   }}
-               }}
-               if (btn) {{
-                   btn.click();
-                   console.log('✅ 点击发送按钮');
-               }} else {{
-                   console.log('❌ 未找到发送按钮');
-               }}
-           }}, 300);
-           return true;
-       }})();
-       """
-       def handle(result):
-           if result:
-               self.terminal.log("✅ 文字发送成功")
-               self.response_monitor.user_check_count = 0
-               QTimer.singleShot(1000, lambda: self.response_monitor.check_user_message_appeared(text))
-           else:
-               self.terminal.log("❌ 文字发送失败，重新启用输入框")
-               self.chat_input.set_enabled(True)
-       self.browser_view.run_javascript(js_text, handle)
+    def send_text(self, text):
+        escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        js_text = f"""
+        (function() {{
+            const selectors = [
+                'textarea[data-testid="chat_input_input"]',
+                'textarea.semi-input-textarea',
+                'textarea[placeholder*="发消息"]',
+                'textarea',
+                '[contenteditable="true"]',
+                '.chat-input',
+                '[class*="input"] textarea'
+            ];
+            let ta = null;
+            for (let sel of selectors) {{
+                const el = document.querySelector(sel);
+                if (el) {{
+                    ta = el;
+                    console.log('✅ 找到输入框:', sel);
+                    break;
+                }}
+            }}
+            if (!ta) {{
+                console.log('❌ 未找到输入框');
+                return false;
+            }}
+            ta.focus();
+            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+            const inputEvt = new Event('input', {{ bubbles: true, composed: true }});
+            const setValue = value => {{
+                nativeSetter.call(ta, value);
+                ta.dispatchEvent(inputEvt);
+            }};
+            setValue('{escaped}');
+            ['input','change','keyup','keydown'].forEach(evt => {{
+                ta.dispatchEvent(new Event(evt, {{ bubbles: true, composed: true }}));
+            }});
+            setTimeout(() => {{
+                const sendSelectors = [
+                    'button[type="submit"]',
+                    'button[class*="send"]',
+                    '.send-button',
+                    'button[aria-label*="发送"]',
+                    'button[data-testid*="send"]',
+                    'button.semi-button'
+                ];
+                let btn = null;
+                for (let sel of sendSelectors) {{
+                    const el = document.querySelector(sel);
+                    if (el) {{
+                        btn = el;
+                        console.log('✅ 找到发送按钮:', sel);
+                        break;
+                    }}
+                }}
+                if (btn) {{
+                    btn.click();
+                    console.log('✅ 点击发送按钮');
+                }} else {{
+                    console.log('❌ 未找到发送按钮');
+                }}
+            }}, 300);
+            return true;
+        }})();
+        """
+        def handle(result):
+            if result:
+                self.terminal_panel.log("✅ 文字发送成功")
+                self.response_monitor.user_check_count = 0
+                QTimer.singleShot(1000, lambda: self.response_monitor.check_user_message_appeared(text))
+            else:
+                self.terminal_panel.log("❌ 文字发送失败，重新启用输入框")
+                self.floating_chat.set_enabled(True)
+        self.browser_view.run_javascript(js_text, handle)
 
 if __name__ == "__main__":
-   app = QApplication(sys.argv)
-   window = MinimalLightBrowser()
-   window.show()
-   sys.exit(app.exec_())
-
-
+    app = QApplication(sys.argv)
+    window = MinimalLightBrowser()
+    # 不在这里显示主窗口，因为在 __init__ 中已经默认隐藏
+    sys.exit(app.exec_())
